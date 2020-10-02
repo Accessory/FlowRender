@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "tag": ["test1", "test2"],
+      "id": 1,
+      "name": "TEST1"
+    },
+    {
+      "tag": ["test3", "test4"],
+      "id": 2,
+      "name": "TEST2"
+    },
+    {
+      "tag": ["test5", "test6"],
+      "id": 3,
+      "name": "TEST3"
+    }
+  ],
+  "errors": null,
+  "w1": "Test Wert",
+  "w2": "Test Wert 2"
+}
