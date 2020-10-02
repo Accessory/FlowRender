@@ -6,7 +6,6 @@
 ## Dependencies
 The code was written with C++ 17 in mind and needs the following dependencies:
 
-The dependencies are:
 - boost
 - rapidjson
 - FlowUtils
