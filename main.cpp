@@ -22,13 +22,10 @@ int main(int argc, char *argv[]) {
     const auto document = FlowJson::parseJson(values);
     FlowRender render;
     auto start = std::chrono::high_resolution_clock::now();
-    const std::string result = render.render(tmpl, document, "../javatest");
+    const std::string result = render.render(tmpl, document);
     auto finish = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = finish - start;
     LOG_INFO << "Result:" << std::endl << result;
     LOG_INFO << "Duration: " << elapsed.count();
-    FlowString::stringToFile("test.txt", result);
-
-
     return 0;
 }

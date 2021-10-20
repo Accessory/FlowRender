@@ -3,20 +3,20 @@
 #include <string>
 #include <rapidjson/document.h>
 #include <vector>
-#include "FlowRenderConst.h"
+#include <algorithm>
 #include <regex>
+#include <sstream>
 #include <FlowUtils/FlowLog.h>
 #include <FlowUtils/FlowParser.h>
-#include <sstream>
-#include "ListPosition.h"
 #include <FlowUtils/FlowJson.h>
-#include <algorithm>
+#include "ListPosition.h"
+#include "FlowRenderConst.h"
 
 class FlowRender {
 
 public:
-    std::string render(const std::string &templ, const std::string &value) {
-        const std::string cwd = FlowFile::getCurrentDirectory();
+    std::string render(const std::string &templ, const std::string &value,
+                       const std::string &cwd = FlowFile::getCurrentDirectory()) {
         const auto doc = FlowJson::parseJson(value);
         return render(templ, doc, cwd);
     }
@@ -35,9 +35,6 @@ public:
 
         for (size_t i = 0; i < matches.size(); ++i) {
             const auto &match = matches[i];
-//            if(pos > match.position()){
-//                pos = match.position();
-//            }
             const auto part = templ.substr(pos, match.position() - pos);
             rtn << part;
             pos = match.position() + match.length();
@@ -51,34 +48,31 @@ public:
 
 private:
     std::string resolveValuePath(const std::string &valuePath, const std::vector<ListPosition> &listPositions) {
+        if (!valuePath.empty() && valuePath.at(0) == '@') {
+            if (listPositions.empty())
+                return valuePath.substr(1);
+
+            const auto &last = listPositions.back();
+            FlowJson::normelizePath(last.listPath, valuePath.substr(1));
+        }
+
         if (listPositions.empty())
             return valuePath;
-//        std::stringstream prefix;
-//        for (const auto &listPosition : listPositions) {
-//            prefix << listPosition.listPath.substr(0, listPosition.listPath.length() - 1)
-//                   << std::to_string(listPosition.listPos);
-//        }
-//        return prefix.str() + valuePath;
         const auto &last = listPositions.back();
-//        if(!last.isList)
-//            return last.listPath;
-
         const auto prefix = last.listPath.substr(0, last.listPath.length() - 1) + std::to_string(last.listPos);
-        if(valuePath == ".")
+        if (valuePath == ".")
             return prefix;
         return prefix + valuePath;
 
     }
 
     void forwardListPosition(std::vector<ListPosition> &listPositions, size_t &matchPosition, size_t &pos) {
-        if(listPositions.empty())
+        if (listPositions.empty())
             return;
 
         auto &last = listPositions.back();
         if (++last.listPos >= last.listLength) {
             listPositions.pop_back();
-//            if (!listPositions.empty())
-//                pos = listPositions.back().listStartPosition;
         } else {
             matchPosition = listPositions.back().listStartMatch;
             pos = last.listStartPosition;
@@ -90,11 +84,21 @@ private:
         return (last.listPos + 1) == last.listLength;
     }
 
+    bool firstInList(const std::vector<ListPosition> &listPosition) {
+        const auto &last = listPosition.back();
+        return last.listPos == 0;
+    }
+
     void gotoNextEnd(const std::vector<std::smatch> &matches, size_t &matchPosition, size_t &pos) {
         while (++matchPosition < matches.size()) {
             const auto type = matches[matchPosition][1];
             std::string value = matches[matchPosition][2];
             FlowString::trim(value);
+            if (type == "c" && value == "end") {
+                pos = matches[matchPosition].position();
+                --matchPosition;
+                return;
+            }
             if (type == "e" && value == "end") {
                 pos = matches[matchPosition].position();
                 --matchPosition;
@@ -103,6 +107,25 @@ private:
             if (type == "l" && value == "end") {
                 --matchPosition;
                 pos = matches[matchPosition].position() + matches[matchPosition].length();
+                return;
+            }
+            if (type == "h" && value == "end") {
+                --matchPosition;
+                pos = matches[matchPosition].position() + matches[matchPosition].length();
+                return;
+            }
+        }
+    }
+
+    void gotoNextEnd(const std::vector<std::smatch> &matches, size_t &matchPosition, size_t &pos,
+                     const std::string &end_type) {
+        while (++matchPosition < matches.size()) {
+            const auto type = matches[matchPosition][1];
+            std::string value = matches[matchPosition][2];
+            FlowString::trim(value);
+            if (type == end_type && value == "end") {
+                pos = matches[matchPosition].position();
+                --matchPosition;
                 return;
             }
         }
@@ -119,11 +142,12 @@ private:
             const std::string absolutePath = resolveValuePath(valuePath, listPositions);
             rtn = FlowJson::getValue(value, absolutePath);
         } else if (type == "i") {
+            FlowParser::goToNextLine(templ, pos);
             std::string filePath = match[2];
             FlowString::trim(filePath);
             const auto path = FlowFile::combinePath(cwd, filePath);
             const auto iTempl = FlowFile::fileToString(path);
-            const auto icwd = FlowFile::getFileFolder(path);
+            const auto icwd = FlowFile::getParentPath(path);
             const std::string absolutePath = resolveValuePath("", listPositions);
             const rapidjson::Value &iValue = (*FlowJson::getJValue(value, absolutePath));
             rtn = render(iTempl, iValue, icwd);
@@ -143,36 +167,52 @@ private:
                 const auto value_paths = FlowJson::findAllJsonValues(value, listPosition.listPath);
                 listPosition.listLength = value_paths.size();
                 if (listPositions.back().listLength == 0) {
-                    gotoNextEnd(matches, matchPosition, pos);
+                    gotoNextEnd(matches, matchPosition, pos, "l");
                     FlowParser::goToNextLine(templ, pos);
                 }
             }
         } else if (type == "f") {
             const std::string match_value = match[2];
-            const auto split_value = FlowString::splitToStringVector(match_value, ",");
+            const auto split_value = FlowString::splitOnFirst(match_value, " ");
             auto functionName = split_value[0];
             FlowString::trim(functionName);
-            if (functionName == "listInfo") {
-                const std::string absolutePath = resolveValuePath("", listPositions);
-                rtn = absolutePath;
-            }
-            if (functionName == "list") {
-                auto value_path = split_value[1];
-                FlowString::trim(value_path);
-                const auto doc_values = FlowJson::getValues(value, value_path);
-                rtn = FlowString::join(doc_values, "\n");
-            } else if (functionName == "not_last") {
-                if (!lastInList(listPositions))
-                    rtn = split_value[1];
-            } else if (functionName == "last") {
-                if (lastInList(listPositions))
-                    rtn = split_value[1];
-            } else if (functionName == "join") {
-                auto value_path = split_value[1];
-                FlowString::trim(value_path);
-                auto delimiter = split_value[2];
-                const auto doc_values = FlowJson::getValues(value, value_path);
-                rtn = FlowString::join(doc_values, delimiter);
+            if (functionName != "end") {
+                if (functionName == "listInfo") {
+                    const std::string absolutePath = resolveValuePath("", listPositions);
+                    rtn = absolutePath;
+                } else if (functionName == "list") {
+                    auto value_path = split_value[1];
+                    FlowString::trim(value_path);
+                    const auto doc_values = FlowJson::getValues(value, value_path);
+                    rtn = FlowString::join(doc_values, "\n");
+                } else if (functionName == "not_last") {
+                    if (!lastInList(listPositions))
+                        rtn = split_value[1];
+                } else if (functionName == "last") {
+                    if (lastInList(listPositions))
+                        rtn = split_value[1];
+                } else if (functionName == "not_first") {
+                    if (!firstInList(listPositions))
+                        rtn = split_value[1];
+                } else if (functionName == "join") {
+                    auto value_path = split_value[1];
+                    FlowString::trim(value_path);
+                    auto delimiter = split_value[2];
+                    const auto doc_values = FlowJson::getValues(value, value_path);
+                    rtn = FlowString::join(doc_values, delimiter);
+                } else if (functionName == "upper") {
+                    auto valuePath = split_value[1];
+                    FlowString::trim(valuePath);
+                    const std::string absolutePath = resolveValuePath(valuePath, listPositions);
+                    rtn = FlowJson::getValue(value, absolutePath);
+                    FlowString::toUpper(rtn);
+                } else if (functionName == "lower") {
+                    auto valuePath = split_value[1];
+                    FlowString::trim(valuePath);
+                    const std::string absolutePath = resolveValuePath(valuePath, listPositions);
+                    rtn = FlowJson::getValue(value, absolutePath);
+                    FlowString::toLower(rtn);
+                }
             }
         } else if (type == "r") {
             rtn = match[2];
@@ -180,11 +220,9 @@ private:
             FlowParser::goToNextLine(templ, pos);
             std::string values = match[2];
             FlowString::trim(values);
-            if (values == "end") {
-                forwardListPosition(listPositions, matchPosition, pos);
-            } else {
+            if (values != "end") {
                 const auto valuesVector = FlowString::splitNotEmpty(values, " ");
-                if(valuesVector.size() != 2)
+                if (valuesVector.size() != 2)
                     return "";
 
                 const auto path = valuesVector[0];
@@ -192,22 +230,76 @@ private:
 
                 const std::string absolutePath = resolveValuePath(path, listPositions);
                 const auto listPath = resolveValuePath("", listPositions);
-                ListPosition &listPosition = listPositions.emplace_back();
-                listPosition.listStartMatch = matchPosition;
-                listPosition.listPath = listPath;
-                listPosition.listPos = 0;
-                listPosition.listStartPosition = pos;
                 const auto value_paths = FlowJson::getValue(value, absolutePath);
-//                LOG_INFO << "Value: " << absolutePath << " Equils to: " << value_paths;
-//                LOG_INFO << "listPath: " << listPosition.listPath;
-//                LOG_INFO << "listPath: " << path;
                 if (value_paths != equalsTo) {
-                    gotoNextEnd(matches, matchPosition, pos);
+                    gotoNextEnd(matches, matchPosition, pos, "e");
+                }
+            }
+        } else if (type == "c") {
+            FlowParser::goToNextLine(templ, pos);
+            std::string values = match[2];
+            FlowString::trim(values);
+            if (values == "end") {
+            } else {
+                const auto valuesVector = FlowString::splitOnFirst(values, " ");
+                if (valuesVector.size() != 2)
+                    return "";
+
+                const auto path = valuesVector[0];
+                const auto equalsTo = valuesVector[1];
+
+                const std::string absolutePath = resolveValuePath(path, listPositions);
+                const auto listPath = resolveValuePath("", listPositions);
+                const auto value_paths = FlowJson::getValue(value, absolutePath);
+                if (!checkRegex(value_paths, equalsTo)) {
+                    gotoNextEnd(matches, matchPosition, pos, "c");
+                }
+            }
+        } else if (type == "h") {
+            FlowParser::goToNextLine(templ, pos);
+            std::string values = match[2];
+            FlowString::trim(values);
+            if (values == "end") {
+            } else {
+                const auto valuesVector = FlowString::splitNotEmpty(values, " ");
+                if (valuesVector.size() != 1)
+                    return "";
+
+                const auto path = valuesVector[0];
+
+                const std::string absolutePath = resolveValuePath(path, listPositions);
+                const auto listPath = resolveValuePath("", listPositions);
+                const auto exists = FlowJson::exists(value, absolutePath);
+                if (!exists) {
+                    gotoNextEnd(matches, matchPosition, pos, "h");
+                }
+            }
+        } else if (type == "n") {
+            FlowParser::goToNextLine(templ, pos);
+            std::string values = match[2];
+            FlowString::trim(values);
+            if (values != "end") {
+                const auto valuesVector = FlowString::splitOnFirst(values, " ");
+                if (valuesVector.empty())
+                    return "";
+
+                const auto &path = valuesVector[0];
+                const auto &checkToPath = valuesVector.size() == 2 ? valuesVector[1] : "";
+                const std::string absolutePath = resolveValuePath(path, listPositions);
+                const auto listPath = resolveValuePath("", listPositions);
+                const auto pathValue = FlowJson::getValue(value, absolutePath);
+                if (!pathValue.empty() && (checkToPath.empty() || checkToPath == pathValue)) {
+                    gotoNextEnd(matches, matchPosition, pos, "n");
                 }
             }
         }
 
         return rtn;
+    }
+
+    static bool checkRegex(const std::string &value, const std::string &expr) {
+        std::regex to_match(expr);
+        return std::regex_match(value, to_match);
     }
 
     static std::vector<std::smatch> getAllMatches(const std::string &templ) {

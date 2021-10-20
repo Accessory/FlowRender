@@ -3,7 +3,8 @@
     {
       "tag": ["test1", "test2"],
       "id": 1,
-      "name": "TEST1"
+      "name": "TEST1",
+      "alias": "TeSt5"
     },
     {
       "tag": ["test3", "test4"],

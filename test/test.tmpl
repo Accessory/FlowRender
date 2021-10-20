@@ -15,3 +15,34 @@ Test 2:
 Test 3:
 W1: #!v(/w1)
 W2: #!v(/w2)
+
+Test 4:
+#!c(/w1 .*)
+W1 : #!v(/w1)
+W2 : #!v(/w2)
+#!c(end)
+#!c(/w1 Test)
+W1 : #!v(/w1)
+W2 : #!v(/w2)
+#!c(end)
+
+Test5:
+#!h(/w1)
+W1 : #!v(/w1)
+#!h(end)
+#!h(/w2)
+W1 : #!v(/w2)
+#!h(end)
+#!h(/w3)
+W1 : #!v(/w3)
+#!h(end)
+
+Test6:
+#!l(/items/-)
+#!f(listInfo)
+#!e(/id 1)
+Teeee
+#!f(lower /alias)
+#!f(upper /alias)
+#!e(end)
+#!l(end)
